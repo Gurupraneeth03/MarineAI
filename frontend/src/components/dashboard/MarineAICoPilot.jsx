@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Sparkles, Send, Mic, ChevronUp } from 'lucide-react';
+import { analyzeMarineQuery } from '../../api/aiApi';
 
-export default function MarineAICoPilot({ onNavigateToRoute }) {
+export default function MarineAICoPilot({ onNavigateToRoute, location }) {
   const [inputText, setInputText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
   const [messages, setMessages] = useState([
     {
       id: 1,
@@ -34,26 +36,54 @@ export default function MarineAICoPilot({ onNavigateToRoute }) {
     }
   ]);
 
-  const handleSend = () => {
-    if (!inputText.trim()) return;
+  const handleSend = async () => {
+    if (!inputText.trim() || isProcessing) return;
+    const userQuery = inputText.trim();
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const userMsg = { id: Date.now(), sender: 'user', time: now, text: inputText };
+    const userMsg = { id: Date.now(), sender: 'user', time: now, text: userQuery };
+
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+    setIsProcessing(true);
 
-    setTimeout(() => {
+    try {
+      const aiResult = await analyzeMarineQuery({
+        query: userQuery,
+        userLocation: { latitude: location?.lat || 16.98, longitude: location?.lon || 82.24 },
+        language: 'en'
+      });
+
+      const responseText = aiResult.data?.answer ||
+        `Analyzing live telemetry for "${userQuery}"... SST is 28.4 °C with mild swells (1.2m). Optimal fishing window is between 06:00 and 11:00 AM.`;
+
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
           sender: 'ai',
-          time: now,
-          text: `Analyzing live telemetry for "${inputText}"... SST is 28.4 °C with mild swells (1.2m). Optimal fishing window is between 06:00 and 11:00 AM.`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          text: responseText,
           actionText: 'View Details',
-          actionType: 'details'
+          actionType: 'details',
+          isFallback: aiResult.isFallback
         }
       ]);
-    }, 600);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          sender: 'ai',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          text: `Analyzing live telemetry for "${userQuery}"... SST is 28.4 °C with mild swells (1.2m).`,
+          actionText: 'View Details',
+          actionType: 'details',
+          isFallback: true
+        }
+      ]);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -67,7 +97,9 @@ export default function MarineAICoPilot({ onNavigateToRoute }) {
           </h2>
           <div className="flex items-center gap-1.5 ml-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[10px] text-emerald-400 font-mono">Online</span>
+            <span className="text-[10px] text-emerald-400 font-mono">
+              {isProcessing ? 'Thinking...' : 'Online'}
+            </span>
           </div>
         </div>
 
@@ -92,7 +124,14 @@ export default function MarineAICoPilot({ onNavigateToRoute }) {
 
           return (
             <div key={msg.id} className="flex flex-col items-start">
-              <span className="text-[10px] text-slate-500 font-mono mb-1">{msg.time}</span>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[10px] text-slate-500 font-mono">{msg.time}</span>
+                {msg.isFallback && (
+                  <span className="text-[9px] text-amber-400 font-mono border border-amber-500/30 px-1 rounded">
+                    Fallback
+                  </span>
+                )}
+              </div>
               <div className="bg-[#0A2239] text-slate-200 border border-slate-800 text-xs p-3.5 rounded-xl rounded-tl-none shadow-sm max-w-[95%] space-y-2.5">
                 <p className="leading-relaxed">
                   {msg.text.includes('PFZ-03') ? (
@@ -133,6 +172,7 @@ export default function MarineAICoPilot({ onNavigateToRoute }) {
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             placeholder="Ask Marine AI anything..."
+            disabled={isProcessing}
             className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
           />
           <button className="text-slate-400 hover:text-white p-1 cursor-pointer">
@@ -140,7 +180,8 @@ export default function MarineAICoPilot({ onNavigateToRoute }) {
           </button>
           <button
             onClick={handleSend}
-            className="w-7 h-7 rounded-lg bg-[#1363DF] hover:bg-[#00B4D8] text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+            disabled={isProcessing}
+            className="w-7 h-7 rounded-lg bg-[#1363DF] hover:bg-[#00B4D8] text-white flex items-center justify-center transition-all cursor-pointer shrink-0 disabled:opacity-50"
           >
             <Send className="w-3.5 h-3.5" />
           </button>

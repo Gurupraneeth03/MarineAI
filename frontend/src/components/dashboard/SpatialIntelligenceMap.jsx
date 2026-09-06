@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline } from 'react
 import L from 'leaflet';
 import { Plus, Minus, Target, Shield, Cloud, Bell, Fish, Hexagon } from 'lucide-react';
 
-export default function SpatialIntelligenceMap() {
+export default function SpatialIntelligenceMap({ pfzs, location, isLoading, isFallback }) {
   const [layers, setLayers] = useState({
     pfz: true,
     risk: true,
@@ -11,6 +11,9 @@ export default function SpatialIntelligenceMap() {
     alerts: true,
     geofences: true,
   });
+
+  const centerLat = location?.lat || 16.92;
+  const centerLon = location?.lon || 82.38;
 
   // Custom vessel marker icon
   const vesselIcon = useMemo(() => L.divIcon({
@@ -53,6 +56,12 @@ export default function SpatialIntelligenceMap() {
     [16.98, 82.24],
     [16.72, 82.28], // PFZ-02
     [16.88, 82.58], // PFZ-01
+  ];
+
+  const displayPfzs = (pfzs && pfzs.length > 0) ? pfzs : [
+    { id: 'PFZ-03', name: 'PFZ-03 (High Potential)', latitude: 17.06, longitude: 82.48, score: 92, distanceKm: 18.4 },
+    { id: 'PFZ-02', name: 'PFZ-02', latitude: 16.72, longitude: 82.28, score: 85, distanceKm: 35.1 },
+    { id: 'PFZ-01', name: 'PFZ-01', latitude: 16.88, longitude: 82.58, score: 68, distanceKm: 24.5 }
   ];
 
   return (
@@ -140,12 +149,18 @@ export default function SpatialIntelligenceMap() {
             </div>
           </button>
         </div>
+
+        {isFallback && (
+          <span className="text-[10px] font-mono text-amber-400 bg-amber-950/40 border border-amber-500/30 px-2 py-0.5 rounded">
+            Demo Map Layer
+          </span>
+        )}
       </div>
 
       {/* MAP CONTAINER */}
       <div className="flex-1 w-full h-full relative z-0">
         <MapContainer
-          center={[16.92, 82.38]}
+          center={[centerLat, centerLon]}
           zoom={10}
           zoomControl={false}
           scrollWheelZoom={false}
@@ -210,36 +225,20 @@ export default function SpatialIntelligenceMap() {
           </Marker>
 
           {/* PFZ Markers */}
-          {layers.pfz && (
-            <>
-              <Marker position={[17.06, 82.48]} icon={createPfzIcon('PFZ-03', '92%')}>
-                <Popup>
-                  <div className="font-mono text-xs p-1">
-                    <strong className="text-emerald-400">PFZ-03 (High Potential)</strong>
-                    <p>Confidence: 92% | Distance: 18.4 km NE</p>
-                  </div>
-                </Popup>
-              </Marker>
-
-              <Marker position={[16.72, 82.28]} icon={createPfzIcon('PFZ-02', '85%')}>
-                <Popup>
-                  <div className="font-mono text-xs p-1">
-                    <strong className="text-emerald-400">PFZ-02</strong>
-                    <p>Confidence: 85% | SST: 28.2 °C</p>
-                  </div>
-                </Popup>
-              </Marker>
-
-              <Marker position={[16.88, 82.58]} icon={createPfzIcon('PFZ-01', '68%')}>
-                <Popup>
-                  <div className="font-mono text-xs p-1">
-                    <strong className="text-amber-400">PFZ-01</strong>
-                    <p>Confidence: 68% | Medium Chlorophyll</p>
-                  </div>
-                </Popup>
-              </Marker>
-            </>
-          )}
+          {layers.pfz && displayPfzs.map((pfzItem) => (
+            <Marker
+              key={pfzItem.id || pfzItem.name}
+              position={[pfzItem.latitude, pfzItem.longitude]}
+              icon={createPfzIcon(pfzItem.id || 'PFZ', `${pfzItem.score}%`)}
+            >
+              <Popup>
+                <div className="font-mono text-xs p-1">
+                  <strong className="text-emerald-400">{pfzItem.name || pfzItem.id}</strong>
+                  <p>Suitability: {pfzItem.score}% | Distance: {pfzItem.distanceKm} km</p>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
         </MapContainer>
 
         {/* MAP ROUTE DISTANCE BADGE */}

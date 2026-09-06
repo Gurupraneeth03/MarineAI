@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Circle, Polygon, Marker, Popup } from 'react-leaflet';
+import React, { useState, useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, Circle, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { 
@@ -12,22 +12,65 @@ import {
   CheckCircle2, 
   Layers, 
   Send, 
-  ShieldAlert, 
-  Navigation,
-  Compass,
-  RotateCcw,
-  Info
+  Compass
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getTelemetry } from '../api/weatherApi';
+import { calculateMarineRisk, MOCK_RISK_FALLBACK } from '../api/riskApi';
+
+const DEFAULT_LOCATION = { lat: 16.98, lon: 82.24 };
 
 export default function SafetyRiskPage() {
   const navigate = useNavigate();
   const [activeLayer, setActiveLayer] = useState('Risk Heatmap');
   const [isLayersOpen, setIsLayersOpen] = useState(false);
 
-  // Center Coordinates for Risk Core (Offshore Bay of Bengal near Kakinada)
+  // API State
+  const [telemetryState, setTelemetryState] = useState({ data: null, isFallback: false, source: 'live' });
+  const [riskState, setRiskState] = useState({ data: null, isFallback: false, source: 'live' });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSafetyRiskData() {
+      try {
+        // 1. Fetch live weather & ocean telemetry
+        const telemetryRes = await getTelemetry(DEFAULT_LOCATION);
+        if (!isMounted) return;
+        setTelemetryState(telemetryRes);
+
+        const tData = telemetryRes.data;
+        const riskInput = {
+          windSpeed: tData?.wind?.speed ?? 14,
+          windGust: tData?.wind?.gust ?? 18,
+          waveHeight: tData?.waves?.height ?? 1.2,
+          rainProbability: tData?.precipitation ?? 0,
+          lightning: 0,
+          cyclone: 0
+        };
+
+        // 2. Compute Marine Risk score using backend Risk Engine
+        const riskRes = await calculateMarineRisk(riskInput);
+        if (!isMounted) return;
+        setRiskState(riskRes);
+      } catch {
+        // Fallbacks handled inside services
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadSafetyRiskData();
+    return () => { isMounted = false; };
+  }, []);
+
   const centerCoords = [16.85, 82.60];
   const vesselCoords = [16.9241, 82.2418];
+
+  const riskData = riskState.data || MOCK_RISK_FALLBACK;
+
+  const isAnyFallback = telemetryState.isFallback || riskState.isFallback;
 
   // Custom DivIcon for Center Core Marker
   const coreMarkerIcon = useMemo(() => L.divIcon({
@@ -73,31 +116,43 @@ export default function SafetyRiskPage() {
     iconAnchor: [13, 13]
   }), []);
 
-  // Risk Contributors Data
+  // Dynamic Risk Contributors Data from telemetry + risk engine
+  const windVal = Math.min(100, Math.round((telemetryState.data?.wind?.speed || 14) * 3));
+  const waveVal = Math.min(100, Math.round((telemetryState.data?.waves?.height || 1.2) * 40));
+
   const riskContributors = [
-    { label: 'Wind', value: 75, color: 'bg-red-500', icon: Wind },
-    { label: 'Waves', value: 60, color: 'bg-amber-500', icon: Waves },
-    { label: 'Lightning', value: 90, color: 'bg-red-600', icon: Zap },
-    { label: 'Cyclone', value: 30, color: 'bg-amber-400', icon: AlertTriangle },
+    { label: 'Wind', value: windVal || 75, color: windVal > 60 ? 'bg-red-500' : 'bg-amber-500', icon: Wind },
+    { label: 'Waves', value: waveVal || 60, color: waveVal > 60 ? 'bg-[#1363DF]' : 'bg-amber-500', icon: Waves },
+    { label: 'Lightning', value: 30, color: 'bg-amber-400', icon: Zap },
+    { label: 'Cyclone', value: 0, color: 'bg-emerald-500', icon: AlertTriangle },
     { label: 'Current', value: 50, color: 'bg-amber-500', icon: Compass }
   ];
+
+  const scoreGauge = riskData.score ?? 72;
+  const strokeOffset = 125.6 - (125.6 * scoreGauge) / 100;
 
   return (
     <div className="max-w-[1600px] mx-auto space-y-6 pb-12">
       {/* PAGE HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
-            Risk Analysis
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
+              Risk Analysis
+            </h1>
+            {isAnyFallback && (
+              <span className="text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                Demo Data (Offline Fallback)
+              </span>
+            )}
+          </div>
           <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-            Marine Risk Assessment
+            Marine Risk Assessment & Safety Gauge
           </p>
         </div>
 
         {/* HEADER RIGHT: RISK LEGEND TAGS & RISK LAYERS BUTTON */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* LEGEND BADGES */}
           <div className="hidden sm:flex items-center gap-3 bg-white border border-[#E2E8F0] px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs">
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
@@ -117,7 +172,6 @@ export default function SafetyRiskPage() {
             </div>
           </div>
 
-          {/* RISK LAYERS BUTTON */}
           <div className="relative">
             <button
               onClick={() => setIsLayersOpen(!isLayersOpen)}
@@ -127,7 +181,6 @@ export default function SafetyRiskPage() {
               <span>Risk Layers</span>
             </button>
 
-            {/* DROPDOWN LAYER PICKER */}
             {isLayersOpen && (
               <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-[500] p-2 text-xs font-medium space-y-1">
                 {['Risk Heatmap', 'Wind Vectors', 'Wave Swell Grid', 'Sea Temperature'].map((layer) => (
@@ -156,7 +209,6 @@ export default function SafetyRiskPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* LEFT COLUMN: SATELLITE MAP & METRICS BAR (8 COLS) */}
         <div className="lg:col-span-8 space-y-4">
-          {/* SATELLITE RISK HEATMAP DISPLAY */}
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card overflow-hidden">
             <div className="h-[440px] md:h-[480px] relative w-full">
               <MapContainer
@@ -170,8 +222,6 @@ export default function SafetyRiskPage() {
                   attribution="&copy; Esri, DigitalGlobe, GeoEye, Earthstar Geographics"
                 />
 
-                {/* CONCENTRIC RISK HEATMAP CONTOURS (OUTER TO INNER) */}
-                {/* 1. LOW RISK (GREEN) */}
                 <Circle
                   center={centerCoords}
                   radius={75000}
@@ -183,7 +233,6 @@ export default function SafetyRiskPage() {
                   }}
                 />
 
-                {/* 2. MODERATE RISK (YELLOW) */}
                 <Circle
                   center={centerCoords}
                   radius={52000}
@@ -195,7 +244,6 @@ export default function SafetyRiskPage() {
                   }}
                 />
 
-                {/* 3. HIGH RISK (ORANGE) */}
                 <Circle
                   center={centerCoords}
                   radius={34000}
@@ -207,7 +255,6 @@ export default function SafetyRiskPage() {
                   }}
                 />
 
-                {/* 4. EXTREME RISK CORE (RED) */}
                 <Circle
                   center={centerCoords}
                   radius={18000}
@@ -219,17 +266,15 @@ export default function SafetyRiskPage() {
                   }}
                 />
 
-                {/* STORM CORE MARKER */}
                 <Marker position={centerCoords} icon={coreMarkerIcon}>
                   <Popup>
                     <div className="p-1 font-sans text-xs">
-                      <div className="font-bold text-red-600">Cyclone Extreme Core</div>
-                      <div className="text-slate-600">Max Sustained Wind: 48 kts</div>
+                      <div className="font-bold text-red-600">Offshore Risk Core</div>
+                      <div className="text-slate-600">Sustained Wind: {telemetryState.data?.wind?.speed || 14} kts</div>
                     </div>
                   </Popup>
                 </Marker>
 
-                {/* ACTIVE VESSEL POSITION MARKER */}
                 <Marker position={vesselCoords} icon={vesselMarkerIcon}>
                   <Popup>
                     <div className="p-1 font-sans text-xs">
@@ -240,7 +285,6 @@ export default function SafetyRiskPage() {
                 </Marker>
               </MapContainer>
 
-              {/* FLOATING RISK LEVEL LEGEND CARD ON BOTTOM LEFT OF MAP */}
               <div className="absolute bottom-4 left-4 z-[400] bg-slate-950/85 backdrop-blur-md border border-slate-800 text-white p-3 rounded-xl shadow-xl text-xs space-y-2 select-none min-w-[120px]">
                 <p className="font-bold text-[11px] uppercase tracking-wider text-slate-300">Risk Level</p>
                 <div className="space-y-1 text-[11px]">
@@ -263,7 +307,6 @@ export default function SafetyRiskPage() {
                 </div>
               </div>
 
-              {/* SCALE INDICATOR AT BOTTOM RIGHT */}
               <div className="absolute bottom-4 right-4 z-[400] bg-slate-950/85 backdrop-blur-md border border-slate-800 text-white px-3 py-1.5 rounded-lg font-mono text-[11px] shadow-md">
                 20 km
               </div>
@@ -272,44 +315,42 @@ export default function SafetyRiskPage() {
 
           {/* BOTTOM 4-CARD METRICS ROW */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-            {/* OVERALL RISK SCORE */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-1">
               <p className="text-xs text-slate-500 font-medium">Overall Risk Score</p>
               <div className="flex items-baseline justify-between pt-1">
                 <p className="font-mono text-2xl font-bold text-[#0F172A]">
-                  72 <span className="text-xs font-normal text-slate-400">/100</span>
+                  {isLoading ? '...' : scoreGauge} <span className="text-xs font-normal text-slate-400">/100</span>
                 </p>
-                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-50 text-red-600 border border-red-200">
-                  High Risk
+                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-600 border border-amber-200">
+                  {riskData.level || 'Moderate'}
                 </span>
               </div>
             </div>
 
-            {/* PRIMARY RISK FACTOR */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-1">
               <p className="text-xs text-slate-500 font-medium">Primary Risk Factor</p>
               <div className="flex items-center gap-2 pt-1">
                 <Wind className="w-4 h-4 text-slate-700 shrink-0" />
-                <p className="font-bold text-xs text-[#0F172A]">High Wind Speed</p>
+                <p className="font-bold text-xs text-[#0F172A]">
+                  {telemetryState.data?.wind?.speed > 15 ? 'High Wind Speed' : 'Wave Swell'}
+                </p>
               </div>
             </div>
 
-            {/* RISK TREND */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-1">
               <p className="text-xs text-slate-500 font-medium">Risk Trend</p>
               <div className="flex items-center gap-2 pt-1 text-emerald-600 font-bold text-xs">
                 <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Increasing (+12%)</span>
+                <span>Stable</span>
               </div>
             </div>
 
-            {/* AREA */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-1">
               <p className="text-xs text-slate-500 font-medium">Area</p>
               <div className="flex items-center gap-2 pt-1 text-slate-800 font-medium text-xs">
                 <MapPin className="w-4 h-4 text-slate-600 shrink-0" />
                 <div>
-                  <p className="font-semibold text-slate-800">Selected Area</p>
+                  <p className="font-semibold text-slate-800">Kakinada Sector</p>
                   <p className="font-mono text-[11px] text-slate-500">1200 km²</p>
                 </div>
               </div>
@@ -319,17 +360,14 @@ export default function SafetyRiskPage() {
 
         {/* RIGHT COLUMN: RISK SUMMARY GAUGE & CONTRIBUTORS PANEL (4 COLS) */}
         <div className="lg:col-span-4 space-y-4">
-          {/* CARD 1: RISK SUMMARY GAUGE METER */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-3">
             <h2 className="font-bold text-sm text-[#0F172A]">
               Risk Summary
             </h2>
 
-            {/* HALF CIRCLE GAUGE METER */}
             <div className="flex flex-col items-center justify-center pt-2">
               <div className="relative w-44 h-24 flex items-center justify-center">
                 <svg className="w-44 h-44 -rotate-180" viewBox="0 0 100 100">
-                  {/* BACKGROUND ARC */}
                   <circle
                     cx="50"
                     cy="50"
@@ -340,7 +378,6 @@ export default function SafetyRiskPage() {
                     strokeDasharray="125.6 251.2"
                     strokeLinecap="round"
                   />
-                  {/* ACTIVE GRADIENT ARC */}
                   <circle
                     cx="50"
                     cy="50"
@@ -348,7 +385,7 @@ export default function SafetyRiskPage() {
                     fill="none"
                     stroke="url(#riskGradient)"
                     strokeWidth="10"
-                    strokeDasharray="90.4 251.2"
+                    strokeDasharray={`${strokeOffset} 251.2`}
                     strokeLinecap="round"
                   />
                   <defs>
@@ -361,10 +398,9 @@ export default function SafetyRiskPage() {
                   </defs>
                 </svg>
 
-                {/* CENTER SCORE OVERLAY */}
                 <div className="absolute top-8 flex flex-col items-center justify-center text-center">
-                  <span className="font-mono text-3xl font-extrabold text-red-600 leading-none">
-                    72
+                  <span className="font-mono text-3xl font-extrabold text-[#0F172A] leading-none">
+                    {isLoading ? '...' : scoreGauge}
                   </span>
                   <span className="text-[11px] font-mono text-slate-400 font-medium mt-0.5">
                     /100
@@ -372,13 +408,12 @@ export default function SafetyRiskPage() {
                 </div>
               </div>
 
-              <p className="font-bold text-sm text-red-600 mt-2">
-                High Risk
+              <p className="font-bold text-sm text-amber-600 mt-2">
+                {riskData.level || 'Moderate Risk'}
               </p>
             </div>
           </div>
 
-          {/* CARD 2: RISK CONTRIBUTORS PROGRESS BARS */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-3.5">
             <h2 className="font-bold text-sm text-[#0F172A]">
               Risk Contributors
@@ -409,17 +444,15 @@ export default function SafetyRiskPage() {
             </div>
           </div>
 
-          {/* CARD 3: RISK INTERPRETATION */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-4 space-y-2">
             <h3 className="font-bold text-xs text-[#0F172A]">
               Risk Interpretation
             </h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              High wind speed and lightning activity are contributing to elevated risk in this area.
+              {riskData.explainability || 'High wind speed and wave height are contributing to elevated risk in this area.'}
             </p>
           </div>
 
-          {/* CARD 4: RECOMMENDATIONS */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-4 space-y-3">
             <h3 className="font-bold text-xs text-[#0F172A]">
               Recommendations
@@ -445,7 +478,6 @@ export default function SafetyRiskPage() {
             </div>
           </div>
 
-          {/* CARD 5: VIEW SAFE ROUTES ACTION BUTTON */}
           <button
             onClick={() => navigate('/safe-routes')}
             className="w-full flex items-center justify-center gap-2 bg-[#1363DF] hover:bg-[#0D4EB3] text-white font-bold text-xs py-3 rounded-xl shadow-md transition-all cursor-pointer"

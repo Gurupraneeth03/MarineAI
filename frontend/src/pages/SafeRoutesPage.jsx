@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Circle, Polygon, Polyline, Marker, Popup } from 'react-leaflet';
+import React, { useState, useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, Circle, Polyline, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { 
@@ -16,32 +16,87 @@ import {
   X,
   Info
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { findFishingRoute } from '../api/routeApi';
+import { checkGeofence } from '../api/geofenceApi';
+
+const DEFAULT_START_COORDS = [16.9241, 82.2418]; // Kakinada Port
+const DEFAULT_TARGET_COORDS = [17.04, 82.78];   // PFZ-03 Target
 
 export default function SafeRoutesPage() {
+  const navigate = useNavigate();
   const [selectedRoute, setSelectedRoute] = useState('Route A');
   const [isFavoritesSaved, setIsFavoritesSaved] = useState(false);
   const [isPreferencesModalOpen, setIsPreferencesModalOpen] = useState(false);
 
-  // Map Coordinates & Waypoints
-  const startCoords = [16.9241, 82.2418]; // Kakinada
-  const targetCoords = [17.04, 82.78];   // PFZ-03
+  // API State
+  const [routeState, setRouteState] = useState({ data: null, isFallback: false, source: 'live' });
+  const [geofenceCheckState, setGeofenceCheckState] = useState({ data: null, isFallback: false, source: 'live' });
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Route A (Recommended Green Route - Avoids hazards to the north)
-  const routeAPoints = [
-    startCoords,
-    [16.95, 82.35],
-    [16.98, 82.52],
-    [17.02, 82.68],
-    targetCoords
-  ];
+  useEffect(() => {
+    let isMounted = true;
 
-  // Route B (Alternative Yellow Route - Curves south around Restricted Zone)
+    async function loadSafeRouteData() {
+      try {
+        // 1. Fetch live safe fishing route from Express backend solver
+        const routeRes = await findFishingRoute({
+          startLat: DEFAULT_START_COORDS[0],
+          startLon: DEFAULT_START_COORDS[1],
+          targetPfzId: 'PFZ-001'
+        });
+
+        if (!isMounted) return;
+        setRouteState(routeRes);
+
+        const routeData = routeRes.data;
+        const waypoints = routeData?.waypoints || [];
+
+        // 2. Independently validate route waypoints against geofence engine
+        if (waypoints.length > 0) {
+          const checkRes = await checkGeofence({
+            latitude: DEFAULT_START_COORDS[0],
+            longitude: DEFAULT_START_COORDS[1],
+            waypoints
+          });
+          if (!isMounted) return;
+          setGeofenceCheckState(checkRes);
+        }
+      } catch {
+        // Fallback handled in service modules
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadSafeRouteData();
+    return () => { isMounted = false; };
+  }, []);
+
+  const routeData = routeState.data || {};
+  const isFallback = routeState.isFallback || geofenceCheckState.isFallback;
+
+  // Transform backend waypoints { lat, lon } into Leaflet polyline points [lat, lon]
+  const liveRoutePoints = useMemo(() => {
+    if (routeData.waypoints && routeData.waypoints.length > 0) {
+      return routeData.waypoints.map(wp => [wp.lat, wp.lon]);
+    }
+    return [
+      DEFAULT_START_COORDS,
+      [16.95, 82.35],
+      [16.98, 82.52],
+      [17.02, 82.68],
+      DEFAULT_TARGET_COORDS
+    ];
+  }, [routeData]);
+
+  // Route B (Alternative Yellow Route)
   const routeBPoints = [
-    startCoords,
+    DEFAULT_START_COORDS,
     [16.84, 82.32],
     [16.72, 82.48],
     [16.75, 82.65],
-    targetCoords
+    DEFAULT_TARGET_COORDS
   ];
 
   // Custom DivIcon for Start Marker
@@ -88,16 +143,27 @@ export default function SafeRoutesPage() {
     iconAnchor: [15, 15]
   }), []);
 
+  const routeDistance = routeData.distanceKm ? `${routeData.distanceKm} km` : '21.7 km';
+  const routeStatus = routeData.geofenceStatus || 'ROUTE_SAFE';
+  const isRouteSafe = routeStatus === 'ROUTE_SAFE' || routeStatus === 'CLEAR';
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-6 pb-12">
       {/* PAGE HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
-            Safest Route to PFZ-03
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
+              Safest Route to PFZ-03
+            </h1>
+            {isFallback && (
+              <span className="text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                Demo Data (Offline Fallback)
+              </span>
+            )}
+          </div>
           <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-            AI-Optimized Route
+            AI-Optimized Safe Fishing Route Solver
           </p>
         </div>
 
@@ -129,7 +195,7 @@ export default function SafeRoutesPage() {
                   attribution="&copy; Esri, DigitalGlobe, GeoEye, Earthstar Geographics"
                 />
 
-                {/* HIGH RISK (WAVES) HAZARD ZONE (RED/ORANGE CLOUD AT TOP RIGHT) */}
+                {/* HIGH RISK (WAVES) HAZARD ZONE */}
                 <Circle
                   center={[17.15, 82.55]}
                   radius={22000}
@@ -148,7 +214,7 @@ export default function SafeRoutesPage() {
                   </Popup>
                 </Circle>
 
-                {/* RESTRICTED ZONE (RED DASHED CIRCLE AT CENTER BOTTOM) */}
+                {/* RESTRICTED ZONE */}
                 <Circle
                   center={[16.78, 82.48]}
                   radius={16000}
@@ -168,9 +234,9 @@ export default function SafeRoutesPage() {
                   </Popup>
                 </Circle>
 
-                {/* RECOMMENDED ROUTE (ROUTE A - GREEN DASHED POLYLINE) */}
+                {/* RECOMMENDED LIVE ROUTE (ROUTE A - GREEN DASHED POLYLINE) */}
                 <Polyline
-                  positions={routeAPoints}
+                  positions={liveRoutePoints}
                   pathOptions={{
                     color: '#10B981',
                     weight: 4,
@@ -189,7 +255,7 @@ export default function SafeRoutesPage() {
                 />
 
                 {/* START MARKER */}
-                <Marker position={startCoords} icon={startMarkerIcon}>
+                <Marker position={DEFAULT_START_COORDS} icon={startMarkerIcon}>
                   <Popup>
                     <div className="p-1 font-sans text-xs">
                       <div className="font-bold text-[#1363DF]">Start Point</div>
@@ -199,7 +265,7 @@ export default function SafeRoutesPage() {
                 </Marker>
 
                 {/* TARGET MARKER (PFZ-03) */}
-                <Marker position={targetCoords} icon={targetMarkerIcon}>
+                <Marker position={DEFAULT_TARGET_COORDS} icon={targetMarkerIcon}>
                   <Popup>
                     <div className="p-1 font-sans text-xs">
                       <div className="font-bold text-emerald-600">PFZ-03 Destination</div>
@@ -209,7 +275,7 @@ export default function SafeRoutesPage() {
                 </Marker>
               </MapContainer>
 
-              {/* MAP OVERLAY LABELS FOR START & PFZ-03 */}
+              {/* MAP OVERLAY LABELS */}
               <div className="absolute top-28 left-48 z-[400] bg-slate-950/80 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">
                 Start
               </div>
@@ -218,7 +284,6 @@ export default function SafeRoutesPage() {
                 PFZ-03
               </div>
 
-              {/* HAZARD ZONE LABELS OVERLAY ON MAP */}
               <div className="absolute top-16 right-56 z-[400] text-center pointer-events-none">
                 <span className="text-xs font-bold text-red-300 drop-shadow-md block">High Risk</span>
                 <span className="text-[10px] text-red-200 drop-shadow-md">(Waves)</span>
@@ -228,7 +293,7 @@ export default function SafeRoutesPage() {
                 <span className="text-xs font-bold text-red-400 drop-shadow-md block">Restricted Zone</span>
               </div>
 
-              {/* FLOATING MAP LEGEND CARD AT BOTTOM LEFT */}
+              {/* FLOATING MAP LEGEND CARD */}
               <div className="absolute bottom-4 left-4 z-[400] bg-slate-950/85 backdrop-blur-md border border-slate-800 text-white p-3 rounded-xl shadow-xl text-xs space-y-2 select-none min-w-[150px]">
                 <p className="font-bold text-[11px] uppercase tracking-wider text-slate-300">Legend</p>
                 <div className="space-y-1.5 text-[11px]">
@@ -260,21 +325,18 @@ export default function SafeRoutesPage() {
 
           {/* BOTTOM ROW UNDER MAP: ELEVATION PROFILE & RISK ALONG ROUTE */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* CARD 1: ROUTE ELEVATION PROFILE (RISK) */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-3">
               <h3 className="font-bold text-xs text-[#0F172A]">
                 Route Elevation Profile (Risk)
               </h3>
 
               <div className="relative h-28 w-full flex items-end pt-2">
-                {/* Y-AXIS LABELS */}
                 <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-[9px] font-mono font-semibold text-slate-400">
                   <span className="text-red-500">High Risk</span>
                   <span className="text-amber-500">Moderate</span>
                   <span className="text-emerald-500">Low Risk</span>
                 </div>
 
-                {/* SVG RISK GRAPH WAVE */}
                 <div className="w-full h-full pl-14 pb-4">
                   <svg className="w-full h-full overflow-visible" viewBox="0 0 200 60" preserveAspectRatio="none">
                     <defs>
@@ -285,12 +347,10 @@ export default function SafeRoutesPage() {
                       </linearGradient>
                     </defs>
 
-                    {/* FILL PATH */}
                     <path
                       d="M 0,50 Q 50,45 100,10 Q 150,40 200,50 L 200,60 L 0,60 Z"
                       fill="url(#riskProfileGradient)"
                     />
-                    {/* STROKE PATH */}
                     <path
                       d="M 0,50 Q 50,45 100,10 Q 150,40 200,50"
                       fill="none"
@@ -300,7 +360,6 @@ export default function SafeRoutesPage() {
                   </svg>
                 </div>
 
-                {/* X-AXIS LABELS */}
                 <div className="absolute bottom-0 left-14 right-0 flex justify-between text-[10px] font-mono text-slate-400">
                   <span className="text-emerald-600 font-bold">Start</span>
                   <span className="text-emerald-600 font-bold">PFZ-03</span>
@@ -308,14 +367,12 @@ export default function SafeRoutesPage() {
               </div>
             </div>
 
-            {/* CARD 2: RISK ALONG ROUTE (DONUT CHART & BREAKDOWN) */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 shadow-xs space-y-3">
               <h3 className="font-bold text-xs text-[#0F172A]">
                 Risk Along Route
               </h3>
 
               <div className="flex items-center justify-around gap-4 pt-1">
-                {/* DONUT CHART */}
                 <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
                   <svg className="w-24 h-24 -rotate-90" viewBox="0 0 36 36">
                     <path
@@ -348,7 +405,6 @@ export default function SafeRoutesPage() {
                   </div>
                 </div>
 
-                {/* LEGEND LIST */}
                 <div className="space-y-1.5 text-xs">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-1.5">
@@ -381,7 +437,6 @@ export default function SafeRoutesPage() {
 
         {/* RIGHT COLUMN: ROUTE SUMMARY & COMPARISON STACK (4 COLS) */}
         <div className="lg:col-span-4 space-y-4">
-          {/* CARD 1: ROUTE SUMMARY */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h2 className="font-bold text-sm text-[#0F172A]">
@@ -389,27 +444,25 @@ export default function SafeRoutesPage() {
               </h2>
             </div>
 
-            {/* RECOMMENDED ROUTE (A) CARD */}
             <div className="bg-emerald-50/60 border border-emerald-200/70 rounded-xl p-3.5 space-y-1.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
                   <span>Recommended Route (A)</span>
                 </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-300">
-                  Safest
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isRouteSafe ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-amber-100 text-amber-700 border border-amber-300'}`}>
+                  {isRouteSafe ? 'Safest' : 'Caution'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-600">
-                This route minimizes risk and avoids hazardous areas.
+                {routeData.summary || 'This route minimizes risk and avoids hazardous areas.'}
               </p>
             </div>
 
-            {/* METRICS GRID */}
             <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-center">
                 <span className="text-[10px] text-slate-400 font-medium block">Distance</span>
-                <span className="font-mono font-bold text-slate-800 text-sm">21.7 km</span>
+                <span className="font-mono font-bold text-slate-800 text-sm">{isLoading ? '...' : routeDistance}</span>
               </div>
 
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-center">
@@ -419,7 +472,7 @@ export default function SafeRoutesPage() {
 
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-center">
                 <span className="text-[10px] text-slate-400 font-medium block">Risk Level</span>
-                <span className="font-mono font-extrabold text-emerald-600 text-sm">LOW</span>
+                <span className="font-mono font-extrabold text-emerald-600 text-sm">{isRouteSafe ? 'LOW' : 'MODERATE'}</span>
               </div>
             </div>
 
@@ -436,14 +489,12 @@ export default function SafeRoutesPage() {
             </div>
           </div>
 
-          {/* CARD 2: HAZARDS AVOIDED / ROUTE COMPARISON */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-3">
             <h3 className="font-bold text-xs text-[#0F172A]">
               Hazards Avoided
             </h3>
 
             <div className="space-y-2 text-xs">
-              {/* ROUTE A */}
               <div
                 onClick={() => setSelectedRoute('Route A')}
                 className={`p-2.5 rounded-lg border flex items-center justify-between transition-all cursor-pointer ${
@@ -454,12 +505,11 @@ export default function SafeRoutesPage() {
               >
                 <span className="text-emerald-700 font-bold">Route A (Recommended)</span>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-slate-600">21.7 km</span>
+                  <span className="font-mono text-slate-600">{routeDistance}</span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">LOW</span>
                 </div>
               </div>
 
-              {/* ROUTE B */}
               <div
                 onClick={() => setSelectedRoute('Route B')}
                 className={`p-2.5 rounded-lg border flex items-center justify-between transition-all cursor-pointer ${
@@ -475,7 +525,6 @@ export default function SafeRoutesPage() {
                 </div>
               </div>
 
-              {/* ROUTE C */}
               <div
                 onClick={() => setSelectedRoute('Route C')}
                 className={`p-2.5 rounded-lg border flex items-center justify-between transition-all cursor-pointer ${
@@ -493,7 +542,6 @@ export default function SafeRoutesPage() {
             </div>
           </div>
 
-          {/* CARD 3: WHY THIS ROUTE? */}
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-4 space-y-2">
             <h3 className="font-bold text-xs text-[#0F172A]">
               Why this route?
@@ -503,7 +551,6 @@ export default function SafeRoutesPage() {
             </p>
           </div>
 
-          {/* CARD 4: BOTTOM ACTION BUTTONS ROW */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsFavoritesSaved(!isFavoritesSaved)}
