@@ -99,6 +99,13 @@ export async function apiClient(endpoint, options = {}) {
 export async function withFallback(apiCallFn, fallbackData, serviceName = 'Service') {
   try {
     const liveData = await apiCallFn();
+
+    // Check if liveData is null/undefined or explicitly indicates backend error (e.g. { success: false })
+    if (liveData === null || liveData === undefined || (typeof liveData === 'object' && liveData !== null && liveData.success === false)) {
+      const errorMsg = (typeof liveData === 'object' && liveData !== null && liveData.error) || `${serviceName} returned empty or invalid response`;
+      throw new Error(errorMsg);
+    }
+
     return {
       data: liveData,
       source: 'live',

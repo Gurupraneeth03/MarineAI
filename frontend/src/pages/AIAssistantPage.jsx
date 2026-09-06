@@ -4,6 +4,7 @@ import AIResponseCard from '../components/assistant/AIResponseCard';
 import FleetContextSidebar from '../components/assistant/FleetContextSidebar';
 import { Send, Mic, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { analyzeMarineQuery } from '../api/aiApi';
 
 export default function AIAssistantPage() {
   const [inputText, setInputText] = useState('');
@@ -14,19 +15,27 @@ export default function AIAssistantPage() {
       text: 'Can I go fishing tomorrow morning, where is the nearest suitable PFZ, and what is the safest route?'
     }
   ]);
-  const [isProcessing, setIsProcessing] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
   const navigate = useNavigate();
 
-  const handleSend = () => {
-    if (!inputText.trim()) return;
-    const userMsg = { id: Date.now(), type: 'user', text: inputText };
+  const handleSend = async () => {
+    if (!inputText.trim() || isProcessing) return;
+    const userQuery = inputText.trim();
+    const userMsg = { id: Date.now(), type: 'user', text: userQuery };
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
     setIsProcessing(true);
 
-    setTimeout(() => {
+    try {
+      await analyzeMarineQuery({
+        query: userQuery,
+        userLocation: { latitude: 16.98, longitude: 82.24 }
+      });
+    } catch {
+      // Safe fallback handled in service
+    } finally {
       setIsProcessing(false);
-    }, 1200);
+    }
   };
 
   const handleQuickChip = (chipText) => {
