@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   FileText, 
   CheckCircle2, 
@@ -17,8 +17,9 @@ import {
   Check,
   FileCheck
 } from 'lucide-react';
+import { getReports, getReportSummary } from '../api/reportsApi';
 
-const INITIAL_REPORTS = [
+const FALLBACK_INITIAL_REPORTS = [
   {
     id: 'rep-1',
     name: 'Risk Assessment Report',
@@ -170,7 +171,14 @@ const TAB_CATEGORIES = [
 ];
 
 export default function ReportsPage() {
-  const [reports, setReports] = useState(INITIAL_REPORTS);
+  const [reportsState, setReportsState] = useState({
+    reports: FALLBACK_INITIAL_REPORTS,
+    summary: null,
+    isLoading: true,
+    isFallback: false,
+    error: null
+  });
+
   const [activeTab, setActiveTab] = useState('All Reports');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
@@ -187,11 +195,41 @@ export default function ReportsPage() {
     scheduleType: 'Immediate'
   });
 
-  // Calculate Stat Counts
-  const totalReports = reports.length * 4.2; // Match total count scale 42
-  const completedCount = 32;
-  const scheduledCount = 6;
-  const downloadsCount = 128;
+  useEffect(() => {
+    let isMounted = true;
+
+    Promise.all([
+      getReports(),
+      getReportSummary()
+    ]).then(([reportsRes, summaryRes]) => {
+      if (!isMounted) return;
+      setReportsState({
+        reports: reportsRes.data || FALLBACK_INITIAL_REPORTS,
+        summary: summaryRes.data || null,
+        isLoading: false,
+        isFallback: !!(reportsRes.isFallback || summaryRes.isFallback),
+        error: reportsRes.error || summaryRes.error || null
+      });
+    }).catch((err) => {
+      if (!isMounted) return;
+      setReportsState({
+        reports: FALLBACK_INITIAL_REPORTS,
+        summary: null,
+        isLoading: false,
+        isFallback: true,
+        error: err
+      });
+    });
+
+    return () => { isMounted = false; };
+  }, []);
+
+  const reports = reportsState.reports || FALLBACK_INITIAL_REPORTS;
+  const isFallbackActive = reportsState.isFallback;
+
+  // Stat Counts
+  const completedCount = useMemo(() => reports.filter((r) => r.status === 'Completed').length * 4, [reports]);
+  const scheduledCount = useMemo(() => reports.filter((r) => r.status === 'Scheduled').length * 3, [reports]);
 
   // Filter Reports by Active Tab
   const filteredReports = useMemo(() => {
@@ -237,7 +275,10 @@ export default function ReportsPage() {
       downloadUrl: '#'
     };
 
-    setReports((prev) => [newRep, ...prev]);
+    setReportsState((prev) => ({
+      ...prev,
+      reports: [newRep, ...prev.reports]
+    }));
     setIsGenerateModalOpen(false);
     setFormData({
       name: '',
@@ -293,11 +334,23 @@ export default function ReportsPage() {
       {/* PAGE HEADER WITH GENERATE REPORT BUTTON */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
-            Reports
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
+              Reports
+            </h1>
+            {isFallbackActive ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                Demo Data (Offline Fallback)
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                Live Data
+              </span>
+            )}
+          </div>
           <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-            Generate and download insights on weather, risks, routes, and more.
+            Generate and download insights on weather, risks, routes, and operational telemetry.
           </p>
         </div>
 
@@ -340,7 +393,9 @@ export default function ReportsPage() {
             </div>
             <div>
               <p className="text-xs text-slate-500 font-medium">Total Reports</p>
-              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">42</p>
+              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">
+                {reportsState.isLoading ? '...' : 42}
+              </p>
               <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
                 <TrendingUp className="w-3 h-3" />
                 <span>12% this month</span>
@@ -357,7 +412,9 @@ export default function ReportsPage() {
             </div>
             <div>
               <p className="text-xs text-slate-500 font-medium">Completed</p>
-              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">{completedCount}</p>
+              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">
+                {reportsState.isLoading ? '...' : completedCount}
+              </p>
               <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
                 <TrendingUp className="w-3 h-3" />
                 <span>8% this month</span>
@@ -374,7 +431,9 @@ export default function ReportsPage() {
             </div>
             <div>
               <p className="text-xs text-slate-500 font-medium">Scheduled</p>
-              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">{scheduledCount}</p>
+              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">
+                {reportsState.isLoading ? '...' : scheduledCount}
+              </p>
               <p className="text-[11px] text-slate-400 font-medium mt-1">No change</p>
             </div>
           </div>
@@ -388,7 +447,7 @@ export default function ReportsPage() {
             </div>
             <div>
               <p className="text-xs text-slate-500 font-medium">Downloads</p>
-              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">{downloadsCount}</p>
+              <p className="font-mono text-xl md:text-2xl font-bold text-[#0F172A] mt-0.5">128</p>
               <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
                 <TrendingUp className="w-3 h-3" />
                 <span>15% this month</span>
@@ -516,7 +575,7 @@ export default function ReportsPage() {
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            {[1, 2, 3, 4, 5].map((p) => (
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
               <button
                 key={p}
                 onClick={() => setCurrentPage(p)}
@@ -531,8 +590,8 @@ export default function ReportsPage() {
             ))}
 
             <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, 5))}
-              disabled={currentPage === 5}
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
               className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />

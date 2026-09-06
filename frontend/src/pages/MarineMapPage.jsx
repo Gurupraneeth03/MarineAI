@@ -1,17 +1,53 @@
-import React, { useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline } from 'react-leaflet';
+import React, { useState, useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import MarineIntelligenceHUD from '../components/map/MarineIntelligenceHUD';
 import MapLegendWidget from '../components/map/MapLegendWidget';
 import MapToolToolbar from '../components/map/MapToolToolbar';
 import { MapPin, Navigation, Bell, HelpCircle, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { getPFZs } from '../api/pfzApi';
+import { getGeofences } from '../api/geofenceApi';
+import { getSST } from '../api/weatherApi';
 
 export default function MarineMapPage() {
   const [showRisk, setShowRisk] = useState(true);
   const [showRoute, setShowRoute] = useState(true);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const navigate = useNavigate();
+
+  // API State
+  const [pfzState, setPfzState] = useState({ data: [], isFallback: false, source: 'live' });
+  const [geofenceState, setGeofenceState] = useState({ data: [], isFallback: false, source: 'live' });
+  const [sstState, setSstState] = useState({ data: null, isFallback: false, source: 'live' });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadMapData() {
+      try {
+        const [pfzRes, geoRes, sstRes] = await Promise.all([
+          getPFZs({ category: 'ALL' }),
+          getGeofences({ latitude: 16.98, longitude: 82.24 }),
+          getSST({ minLat: 16.0, maxLat: 18.0, minLon: 81.5, maxLon: 83.5 })
+        ]);
+
+        if (!isMounted) return;
+
+        setPfzState(pfzRes);
+        setGeofenceState(geoRes);
+        setSstState(sstRes);
+      } catch {
+        // Fallbacks handled inside services
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadMapData();
+    return () => { isMounted = false; };
+  }, []);
 
   const startIcon = useMemo(() => L.divIcon({
     className: 'start-marker',
@@ -27,7 +63,6 @@ export default function MarineMapPage() {
     iconAnchor: [9, 9]
   }), []);
 
-  // Coordinates
   const startPoint = [16.98, 82.24];
   const targetPoint = [16.742, 82.491];
   const routeWaypoints = [
@@ -37,24 +72,36 @@ export default function MarineMapPage() {
     targetPoint
   ];
 
+  const displayPfzs = pfzState.data?.length > 0 ? pfzState.data : [
+    { id: 'PFZ-001', name: 'PFZ-001', latitude: 16.742, longitude: 82.491, score: 82, distanceKm: 31.8 }
+  ];
+
+  const isAnyFallback = pfzState.isFallback || geofenceState.isFallback || sstState.isFallback;
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-6">
       {/* MAP PAGE HEADER & SUB-NAV */}
       <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div>
-            <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
-              Marine GIS Intelligence Map
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
+                Marine GIS Intelligence Map
+              </h1>
+              {isAnyFallback && (
+                <span className="text-[10px] font-mono text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                  Demo GIS Layers (Offline Fallback)
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-1">
               <span className="flex items-center gap-1 text-xs font-mono text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-200">
                 <MapPin className="w-3 h-3 text-[#1363DF]" />
-                Kakinada Coast
+                Kakinada Coast (16.98° N, 82.24° E)
               </span>
             </div>
           </div>
 
-          {/* INTERNAL TAB ROW */}
           <div className="hidden lg:flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-mono">
             {['Dashboard', 'Analysis', 'Settings'].map((tab) => (
               <button
@@ -72,7 +119,6 @@ export default function MarineMapPage() {
           </div>
         </div>
 
-        {/* RIGHT MAP VIEW SHORTCUTS */}
         <div className="flex items-center gap-3 text-xs font-mono text-slate-600">
           <div className="hidden sm:flex items-center gap-3 border-r border-slate-200 pr-3">
             <button className="hover:text-[#1363DF] font-medium cursor-pointer">Global View</button>
@@ -102,13 +148,11 @@ export default function MarineMapPage() {
           zoomControl={false}
           className="w-full h-full"
         >
-          {/* Dark Carto Basemap */}
           <TileLayer
             attribution='&copy; <a href="https://carto.com/">CARTO</a>'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           />
 
-          {/* Moderate / High Risk Zone (Red Hatched Circle) */}
           {showRisk && (
             <Circle
               center={[16.92, 82.32]}
@@ -123,7 +167,6 @@ export default function MarineMapPage() {
             />
           )}
 
-          {/* Recommended Polyline Route */}
           {showRoute && (
             <Polyline
               positions={routeWaypoints}
@@ -145,46 +188,51 @@ export default function MarineMapPage() {
             </Popup>
           </Marker>
 
-          {/* PFZ-001 Target Marker with Open Popup */}
-          <Marker position={targetPoint} icon={pfzIconTargetIcon(pfzTargetIcon)}>
-            <Popup defaultOpen>
-              <div className="font-sans text-xs text-slate-900 space-y-2 p-1 min-w-[160px]">
-                <div className="flex items-center justify-between border-b border-slate-200 pb-1">
-                  <strong className="font-bold text-[#0F172A]">PFZ-001</strong>
-                  <span className="text-amber-600 font-bold">▲</span>
-                </div>
-                <div className="space-y-0.5 text-[11px] text-slate-600 font-mono">
-                  <div className="flex justify-between">
-                    <span>Distance:</span>
-                    <span className="font-semibold text-slate-900">31.8 km SE</span>
+          {/* Live PFZ Markers */}
+          {displayPfzs.map((pfz) => (
+            <Marker
+              key={pfz.id || pfz.name}
+              position={[pfz.latitude, pfz.longitude]}
+              icon={pfzTargetIcon}
+            >
+              <Popup defaultOpen={pfz.id === 'PFZ-001'}>
+                <div className="font-sans text-xs text-slate-900 space-y-2 p-1 min-w-[160px]">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-1">
+                    <strong className="font-bold text-[#0F172A]">{pfz.name || pfz.id}</strong>
+                    <span className="text-amber-600 font-bold">▲</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Suitability:</span>
-                    <span className="font-bold text-[#22C55E]">82%</span>
+                  <div className="space-y-0.5 text-[11px] text-slate-600 font-mono">
+                    <div className="flex justify-between">
+                      <span>Distance:</span>
+                      <span className="font-semibold text-slate-900">{pfz.distanceKm || 31.8} km</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Suitability:</span>
+                      <span className="font-bold text-[#22C55E]">{pfz.score}%</span>
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-1.5 pt-1">
-                  <button
-                    onClick={() => navigate('/safe-routes')}
-                    className="flex-1 py-1 px-2 bg-[#00B4D8] hover:bg-[#0096B4] text-[#001F3F] font-bold text-[11px] rounded transition-all cursor-pointer flex items-center justify-center gap-1"
-                  >
-                    <Navigation className="w-3 h-3" />
-                    <span>Find Route</span>
-                  </button>
-                  <button
-                    onClick={() => navigate('/pfz-explorer')}
-                    className="py-1 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-[11px] rounded border border-slate-300 transition-all cursor-pointer"
-                  >
-                    Details
-                  </button>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <button
+                      onClick={() => navigate('/safe-routes')}
+                      className="flex-1 py-1 px-2 bg-[#00B4D8] hover:bg-[#0096B4] text-[#001F3F] font-bold text-[11px] rounded transition-all cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <Navigation className="w-3 h-3" />
+                      <span>Find Route</span>
+                    </button>
+                    <button
+                      onClick={() => navigate('/pfz-explorer')}
+                      className="py-1 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-[11px] rounded border border-slate-300 transition-all cursor-pointer"
+                    >
+                      Details
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </Popup>
-          </Marker>
+              </Popup>
+            </Marker>
+          ))}
         </MapContainer>
 
-        {/* FLOATING LEFT TOOLBAR */}
         <div className="absolute top-4 left-4 z-[1000]">
           <MapToolToolbar
             onZoomIn={() => {}}
@@ -197,26 +245,19 @@ export default function MarineMapPage() {
           />
         </div>
 
-        {/* FLOATING TOP-RIGHT INTELLIGENCE HUD */}
         <div className="absolute top-4 right-4 z-[1000]">
           <MarineIntelligenceHUD onGeneratePrediction={() => navigate('/safety-risk')} />
         </div>
 
-        {/* FLOATING BOTTOM-LEFT MAP LEGEND */}
         <div className="absolute bottom-4 left-4 z-[1000]">
           <MapLegendWidget />
         </div>
 
-        {/* FLOATING BOTTOM CENTER SYNC PILL */}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-white px-3.5 py-1 rounded-full text-[11px] font-mono text-slate-700 border border-[#E2E8F0] shadow-md flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse"></span>
-          <span>Live Sync: Active - Updated 2m ago</span>
+          <span>{isAnyFallback ? 'Offline Fallback Sync Active' : 'Live Express GIS Sync: Active'}</span>
         </div>
       </div>
     </div>
   );
-}
-
-function pfzIconTargetIcon(icon) {
-  return icon;
 }

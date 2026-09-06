@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   AlertTriangle, 
   Info, 
@@ -11,10 +11,13 @@ import {
   ChevronLeft, 
   Filter,
   RefreshCw,
-  Bell
+  Bell,
+  ShieldAlert
 } from 'lucide-react';
+import { getAlerts, getActiveWarnings, evaluateAlerts } from '../api/alertsApi';
+import { adaptAlertModel, adaptWarningsModel } from '../api/adapters';
 
-const INITIAL_ALERTS = [
+const FALLBACK_INITIAL_ALERTS = [
   {
     id: 'alt-1',
     title: 'High Wind Speed Detected',
@@ -108,17 +111,125 @@ const INITIAL_ALERTS = [
 ];
 
 export default function AlertsPage() {
-  const [alerts, setAlerts] = useState(INITIAL_ALERTS);
+  const [alertsState, setAlertsState] = useState({
+    alerts: FALLBACK_INITIAL_ALERTS,
+    isLoading: true,
+    isFallback: false,
+    error: null
+  });
+  const [warningsState, setWarningsState] = useState({
+    warnings: [],
+    isLoading: true,
+    isFallback: false,
+    error: null
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('All Alerts');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
 
-  // Counts
-  const criticalCount = 3;
-  const highCount = 5;
-  const mediumCount = 8;
-  const lowCount = 12;
-  const totalCount = 28;
+  // Load Alerts & Warnings from Centralized API Layer
+  const loadAlertData = async (isMounted = true) => {
+    const locationParams = { lat: 16.9241, lon: 80.1985 };
+
+    // 1. Fetch Active Alerts
+    try {
+      const alertsRes = await getAlerts();
+      if (!isMounted) return;
+      
+      let liveList = alertsRes.data || [];
+
+      // Also evaluate telemetry alerts if live engine is available
+      try {
+        const evalRes = await evaluateAlerts({
+          latitude: 16.9241,
+          longitude: 80.1985,
+          windSpeed: 28,
+          waveHeight: 3.5
+        });
+        if (evalRes.data && evalRes.data.length > 0) {
+          // Merge evaluated alerts without duplicating IDs
+          const existingIds = new Set(liveList.map(a => a.id));
+          evalRes.data.forEach(item => {
+            if (!existingIds.has(item.id)) {
+              liveList.push(item);
+            }
+          });
+        }
+      } catch (e) {
+        // Silent evaluation fallback
+      }
+
+      // If live API succeeds, retain live alerts list (even if empty)
+      if (!alertsRes.isFallback) {
+        setAlertsState({
+          alerts: liveList,
+          isLoading: false,
+          isFallback: false,
+          error: null
+        });
+      } else {
+        setAlertsState({
+          alerts: FALLBACK_INITIAL_ALERTS,
+          isLoading: false,
+          isFallback: true,
+          error: alertsRes.error
+        });
+      }
+    } catch (err) {
+      if (!isMounted) return;
+      setAlertsState({
+        alerts: FALLBACK_INITIAL_ALERTS,
+        isLoading: false,
+        isFallback: true,
+        error: err
+      });
+    }
+
+    // 2. Fetch IMD Marine Warnings
+    try {
+      const warnRes = await getActiveWarnings(locationParams);
+      if (!isMounted) return;
+      const adaptedWarn = adaptWarningsModel(warnRes.data);
+
+      setWarningsState({
+        warnings: adaptedWarn.warnings || [],
+        isLoading: false,
+        isFallback: !!warnRes.isFallback,
+        error: warnRes.error
+      });
+    } catch (err) {
+      if (!isMounted) return;
+      setWarningsState({
+        warnings: [],
+        isLoading: false,
+        isFallback: true,
+        error: err
+      });
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    loadAlertData(isMounted);
+    return () => { isMounted = false; };
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadAlertData(true);
+    setIsRefreshing(false);
+  };
+
+  const alerts = alertsState.alerts || FALLBACK_INITIAL_ALERTS;
+  const isFallbackActive = alertsState.isFallback || warningsState.isFallback;
+
+  // Dynamic Counts Calculation
+  const criticalCount = useMemo(() => alerts.filter((a) => a.severity === 'Critical').length, [alerts]);
+  const highCount = useMemo(() => alerts.filter((a) => a.severity === 'High').length, [alerts]);
+  const mediumCount = useMemo(() => alerts.filter((a) => a.severity === 'Medium').length, [alerts]);
+  const lowCount = useMemo(() => alerts.filter((a) => a.severity === 'Low' || a.severity === 'Info').length, [alerts]);
+  const totalCount = alerts.length;
 
   // Filter Alerts
   const filteredAlerts = useMemo(() => {
@@ -127,11 +238,25 @@ export default function AlertsPage() {
   }, [alerts, selectedFilter]);
 
   // Paginated Alerts
-  const totalPages = 5;
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredAlerts.length / pageSize)), [filteredAlerts, pageSize]);
   const paginatedAlerts = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return filteredAlerts.slice(0, pageSize);
+    return filteredAlerts.slice(start, start + pageSize);
   }, [filteredAlerts, currentPage, pageSize]);
+
+  // Helper for Icon Selection
+  const getAlertIcon = (alert) => {
+    if (alert.icon) return alert.icon;
+    const title = (alert.title || '').toLowerCase();
+    const desc = (alert.description || '').toLowerCase();
+    if (title.includes('wind') || desc.includes('wind') || title.includes('squall')) return Wind;
+    if (title.includes('wave') || desc.includes('wave') || title.includes('sea')) return Waves;
+    if (title.includes('rain') || desc.includes('rain') || title.includes('precip')) return CloudRain;
+    if (title.includes('cyclone') || title.includes('storm')) return RefreshCw;
+    if (title.includes('geofence') || alert.severity === 'Critical') return AlertTriangle;
+    if (title.includes('pfz') || title.includes('update')) return CheckCircle2;
+    return Info;
+  };
 
   // Helper for Severity Badges & Icon Styles
   const getSeverityStyle = (severity) => {
@@ -175,32 +300,56 @@ export default function AlertsPage() {
       {/* PAGE HEADER & FILTER DROPDOWN */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
-            Alerts
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-sans font-extrabold text-2xl md:text-3xl text-[#0F172A] tracking-tight">
+              Alerts & Advisories
+            </h1>
+            {isFallbackActive ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                Demo Data (Offline Fallback)
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                Live Data
+              </span>
+            )}
+          </div>
           <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-            Stay updated with critical events and notifications.
+            Stay updated with critical events, IMD warnings, and maritime safety notifications.
           </p>
         </div>
 
-        {/* FILTER DROPDOWN */}
-        <div className="flex items-center gap-2 bg-white border border-[#E2E8F0] px-3.5 py-2 rounded-xl shadow-xs">
-          <Filter className="w-4 h-4 text-slate-400" />
-          <select
-            value={selectedFilter}
-            onChange={(e) => {
-              setSelectedFilter(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="bg-transparent font-semibold text-xs text-[#0F172A] focus:outline-none cursor-pointer"
+        {/* CONTROLS: REFRESH & FILTER DROPDOWN */}
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-xs disabled:opacity-50"
+            title="Refresh & Evaluate Marine Alerts"
           >
-            <option value="All Alerts">All Alerts</option>
-            <option value="Critical">Critical Alerts</option>
-            <option value="High">High Severity</option>
-            <option value="Medium">Medium Severity</option>
-            <option value="Low">Low Severity</option>
-            <option value="Info">System Info</option>
-          </select>
+            <RefreshCw className={`w-3.5 h-3.5 text-[#1363DF] ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+
+          <div className="flex items-center gap-2 bg-white border border-[#E2E8F0] px-3.5 py-2 rounded-xl shadow-xs">
+            <Filter className="w-4 h-4 text-slate-400" />
+            <select
+              value={selectedFilter}
+              onChange={(e) => {
+                setSelectedFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="bg-transparent font-semibold text-xs text-[#0F172A] focus:outline-none cursor-pointer"
+            >
+              <option value="All Alerts">All Alerts</option>
+              <option value="Critical">Critical Alerts</option>
+              <option value="High">High Severity</option>
+              <option value="Medium">Medium Severity</option>
+              <option value="Low">Low Severity</option>
+              <option value="Info">System Info</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -218,7 +367,7 @@ export default function AlertsPage() {
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <p className="font-mono text-xl font-bold text-red-700">{criticalCount}</p>
+              <p className="font-mono text-xl font-bold text-red-700">{alertsState.isLoading ? '...' : criticalCount}</p>
               <p className="text-xs text-red-600 font-semibold">Critical</p>
             </div>
           </div>
@@ -236,7 +385,7 @@ export default function AlertsPage() {
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <p className="font-mono text-xl font-bold text-orange-700">{highCount}</p>
+              <p className="font-mono text-xl font-bold text-orange-700">{alertsState.isLoading ? '...' : highCount}</p>
               <p className="text-xs text-orange-600 font-semibold">High</p>
             </div>
           </div>
@@ -254,7 +403,7 @@ export default function AlertsPage() {
               <Info className="w-5 h-5" />
             </div>
             <div>
-              <p className="font-mono text-xl font-bold text-amber-700">{mediumCount}</p>
+              <p className="font-mono text-xl font-bold text-amber-700">{alertsState.isLoading ? '...' : mediumCount}</p>
               <p className="text-xs text-amber-600 font-semibold">Medium</p>
             </div>
           </div>
@@ -272,7 +421,7 @@ export default function AlertsPage() {
               <Info className="w-5 h-5" />
             </div>
             <div>
-              <p className="font-mono text-xl font-bold text-blue-700">{lowCount}</p>
+              <p className="font-mono text-xl font-bold text-blue-700">{alertsState.isLoading ? '...' : lowCount}</p>
               <p className="text-xs text-blue-600 font-semibold">Low</p>
             </div>
           </div>
@@ -290,7 +439,7 @@ export default function AlertsPage() {
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <p className="font-mono text-xl font-bold text-slate-800">{totalCount}</p>
+              <p className="font-mono text-xl font-bold text-slate-800">{alertsState.isLoading ? '...' : totalCount}</p>
               <p className="text-xs text-slate-600 font-semibold">All Alerts</p>
             </div>
           </div>
@@ -299,9 +448,14 @@ export default function AlertsPage() {
 
       {/* ALERT LIST CONTAINER CARD */}
       <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-4">
-        <h2 className="font-bold text-sm text-[#0F172A] border-b border-slate-100 pb-3">
-          Alert List
-        </h2>
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h2 className="font-bold text-sm text-[#0F172A]">
+            Active Marine Alert Console
+          </h2>
+          <span className="text-xs text-slate-500 font-mono">
+            Filtered: {filteredAlerts.length} item{filteredAlerts.length !== 1 ? 's' : ''}
+          </span>
+        </div>
 
         {/* ALERT ROWS LIST */}
         <div className="space-y-3">
@@ -312,7 +466,7 @@ export default function AlertsPage() {
           ) : (
             paginatedAlerts.map((alt) => {
               const styles = getSeverityStyle(alt.severity);
-              const Icon = alt.icon || AlertTriangle;
+              const Icon = getAlertIcon(alt);
               return (
                 <div
                   key={alt.id}
@@ -350,9 +504,9 @@ export default function AlertsPage() {
         {/* PAGINATION FOOTER */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 text-xs text-slate-500 border-t border-slate-100">
           <div>
-            Showing <span className="font-semibold text-slate-800">{(currentPage - 1) * pageSize + 1}</span> to{' '}
-            <span className="font-semibold text-slate-800">{Math.min(currentPage * pageSize, totalCount)}</span> of{' '}
-            <span className="font-semibold text-slate-800">{totalCount}</span> alerts
+            Showing <span className="font-semibold text-slate-800">{filteredAlerts.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}</span> to{' '}
+            <span className="font-semibold text-slate-800">{Math.min(currentPage * pageSize, filteredAlerts.length)}</span> of{' '}
+            <span className="font-semibold text-slate-800">{filteredAlerts.length}</span> alerts
           </div>
 
           <div className="flex items-center gap-1 font-mono">
@@ -364,7 +518,7 @@ export default function AlertsPage() {
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            {[1, 2, 3, 4, 5].map((p) => (
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
               <button
                 key={p}
                 onClick={() => setCurrentPage(p)}

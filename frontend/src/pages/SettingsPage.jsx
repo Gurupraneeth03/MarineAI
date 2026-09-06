@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Settings, 
   Bell, 
@@ -19,11 +19,15 @@ import {
   Check, 
   Save,
   Shield,
-  Key
+  Key,
+  Anchor,
+  Wind,
+  Waves
 } from 'lucide-react';
 
 const SETTINGS_NAV = [
   { id: 'general', label: 'General', icon: Settings },
+  { id: 'vessel', label: 'Vessel & Safety Thresholds', icon: Anchor },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'units', label: 'Units & Measurement', icon: Ruler },
   { id: 'map', label: 'Map Preferences', icon: Map },
@@ -38,7 +42,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general');
   const [savedNotice, setSavedNotice] = useState(false);
 
-  // Form states matching screenshot
+  // General Form States
   const [language, setLanguage] = useState('English');
   const [timezone, setTimezone] = useState('(GMT+05:30) Asia/Kolkata');
   const [dateFormat, setDateFormat] = useState('DD MMM YYYY (20 May 2025)');
@@ -50,6 +54,12 @@ export default function SettingsPage() {
   const [dataUpdateAlertsToggle, setDataUpdateAlertsToggle] = useState(true);
   const [dataRetention, setDataRetention] = useState('90 Days');
 
+  // Vessel & Safety Risk Thresholds
+  const [vesselType, setVesselType] = useState('Artisanal Trawler');
+  const [vesselLength, setVesselLength] = useState('14.5 m');
+  const [maxWaveTolerance, setMaxWaveTolerance] = useState('3.0 m');
+  const [maxWindTolerance, setMaxWindTolerance] = useState('25 kt');
+
   // Additional tab states
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [smsAlerts, setSmsAlerts] = useState(true);
@@ -57,10 +67,63 @@ export default function SettingsPage() {
   const [speedUnit, setSpeedUnit] = useState('Knots (kts)');
   const [coordFormat, setCoordFormat] = useState('Decimal Degrees (DD)');
 
+  // Load saved settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('marine_ai_user_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.language) setLanguage(parsed.language);
+        if (parsed.timezone) setTimezone(parsed.timezone);
+        if (parsed.dateFormat) setDateFormat(parsed.dateFormat);
+        if (parsed.defaultDashboardView) setDefaultDashboardView(parsed.defaultDashboardView);
+        if (parsed.refreshInterval) setRefreshInterval(parsed.refreshInterval);
+        if (typeof parsed.liveDataToggle === 'boolean') setLiveDataToggle(parsed.liveDataToggle);
+        if (typeof parsed.dataUpdateAlertsToggle === 'boolean') setDataUpdateAlertsToggle(parsed.dataUpdateAlertsToggle);
+        if (parsed.dataRetention) setDataRetention(parsed.dataRetention);
+        if (parsed.vesselType) setVesselType(parsed.vesselType);
+        if (parsed.vesselLength) setVesselLength(parsed.vesselLength);
+        if (parsed.maxWaveTolerance) setMaxWaveTolerance(parsed.maxWaveTolerance);
+        if (parsed.maxWindTolerance) setMaxWindTolerance(parsed.maxWindTolerance);
+        if (typeof parsed.emailAlerts === 'boolean') setEmailAlerts(parsed.emailAlerts);
+        if (typeof parsed.smsAlerts === 'boolean') setSmsAlerts(parsed.smsAlerts);
+        if (typeof parsed.cycloneAlerts === 'boolean') setCycloneAlerts(parsed.cycloneAlerts);
+        if (parsed.speedUnit) setSpeedUnit(parsed.speedUnit);
+        if (parsed.coordFormat) setCoordFormat(parsed.coordFormat);
+      }
+    } catch (e) {
+      // LocalStorage unavailable fallback
+    }
+  }, []);
+
   const handleSave = (e) => {
     e.preventDefault();
+    const settingsObj = {
+      language,
+      timezone,
+      dateFormat,
+      defaultDashboardView,
+      refreshInterval,
+      liveDataToggle,
+      dataUpdateAlertsToggle,
+      dataRetention,
+      vesselType,
+      vesselLength,
+      maxWaveTolerance,
+      maxWindTolerance,
+      emailAlerts,
+      smsAlerts,
+      cycloneAlerts,
+      speedUnit,
+      coordFormat,
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      localStorage.setItem('marine_ai_user_settings', JSON.stringify(settingsObj));
+    } catch (e) {}
+
     setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 2000);
+    setTimeout(() => setSavedNotice(false), 2500);
   };
 
   return (
@@ -72,7 +135,7 @@ export default function SettingsPage() {
             Settings
           </h1>
           <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-            Manage your preferences, notifications, and account settings.
+            Manage your operational preferences, safety risk parameters, notifications, and navigation units.
           </p>
         </div>
 
@@ -128,7 +191,7 @@ export default function SettingsPage() {
                           <Globe className="w-4 h-4 text-slate-500" />
                           <span>Language</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Select your preferred language</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Select your preferred interface language</p>
                       </div>
                       <select
                         value={language}
@@ -149,7 +212,7 @@ export default function SettingsPage() {
                           <Clock className="w-4 h-4 text-slate-500" />
                           <span>Timezone</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Select your timezone</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Select your operating timezone</p>
                       </div>
                       <select
                         value={timezone}
@@ -219,7 +282,7 @@ export default function SettingsPage() {
                           <RefreshCw className="w-4 h-4 text-slate-500" />
                           <span>Refresh Interval</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Auto-refresh live data</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Auto-refresh live telemetry</p>
                       </div>
                       <select
                         value={refreshInterval}
@@ -247,9 +310,9 @@ export default function SettingsPage() {
                       <div>
                         <div className="flex items-center gap-2 font-semibold text-slate-800">
                           <Radio className="w-4 h-4 text-slate-500" />
-                          <span>Live Data</span>
+                          <span>Live Data Connection</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Enable or disable live data updates</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Enable or disable Express backend live telemetry</p>
                       </div>
                       <button
                         type="button"
@@ -271,9 +334,9 @@ export default function SettingsPage() {
                       <div>
                         <div className="flex items-center gap-2 font-semibold text-slate-800">
                           <AlertCircle className="w-4 h-4 text-slate-500" />
-                          <span>Data Update Alerts</span>
+                          <span>Data Update Notifications</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Get notified when new data is available</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Get notified when new satellite SST/PFZ data is ingested</p>
                       </div>
                       <button
                         type="button"
@@ -297,7 +360,7 @@ export default function SettingsPage() {
                           <Database className="w-4 h-4 text-slate-500" />
                           <span>Data Retention</span>
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-0.5">Choose how long data is stored</p>
+                        <p className="text-slate-400 text-[11px] mt-0.5">Choose how long local telemetry history is stored</p>
                       </div>
                       <select
                         value={dataRetention}
@@ -314,6 +377,68 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </>
+            )}
+
+            {/* VESSEL & SAFETY RISK THRESHOLDS TAB */}
+            {activeTab === 'vessel' && (
+              <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-5 space-y-4">
+                <h2 className="font-bold text-sm text-[#0F172A] border-b border-slate-100 pb-2.5">
+                  Vessel Specification & Safety Risk Parameters
+                </h2>
+
+                <div className="space-y-4 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-slate-800">Vessel Class</p>
+                      <p className="text-slate-400 text-[11px]">Primary craft specification used for risk calculations</p>
+                    </div>
+                    <select
+                      value={vesselType}
+                      onChange={(e) => setVesselType(e.target.value)}
+                      className="w-full sm:w-64 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-medium focus:outline-none cursor-pointer"
+                    >
+                      <option value="Artisanal Trawler">Artisanal Trawler (Motorized)</option>
+                      <option value="Deep Sea Gillnetter">Deep Sea Gillnetter</option>
+                      <option value="Mechanized Purse Seiner">Mechanized Purse Seiner</option>
+                      <option value="Coastal Patrol Craft">Coastal Patrol Craft</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-50">
+                    <div>
+                      <p className="font-semibold text-slate-800">Maximum Wave Height Tolerance</p>
+                      <p className="text-slate-400 text-[11px]">Swell threshold before risk engine triggers Severe status</p>
+                    </div>
+                    <select
+                      value={maxWaveTolerance}
+                      onChange={(e) => setMaxWaveTolerance(e.target.value)}
+                      className="w-full sm:w-64 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-medium focus:outline-none cursor-pointer font-mono"
+                    >
+                      <option value="1.5 m">1.5 m (Cautious)</option>
+                      <option value="2.5 m">2.5 m (Standard)</option>
+                      <option value="3.0 m">3.0 m (Moderate)</option>
+                      <option value="4.0 m">4.0 m (Heavy Sea)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-50">
+                    <div>
+                      <p className="font-semibold text-slate-800">Maximum Wind Speed Tolerance</p>
+                      <p className="text-slate-400 text-[11px]">Wind gust limit for safe fishing operations</p>
+                    </div>
+                    <select
+                      value={maxWindTolerance}
+                      onChange={(e) => setMaxWindTolerance(e.target.value)}
+                      className="w-full sm:w-64 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-medium focus:outline-none cursor-pointer font-mono"
+                    >
+                      <option value="15 kt">15 kt (Light)</option>
+                      <option value="20 kt">20 kt (Moderate)</option>
+                      <option value="25 kt">25 kt (Standard Trawler)</option>
+                      <option value="35 kt">35 kt (Heavy Craft)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* NOTIFICATIONS TAB */}
@@ -343,7 +468,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between pt-2 border-t border-slate-50">
                     <div>
                       <p className="font-semibold text-slate-800">Email Daily Digest</p>
-                      <p className="text-slate-400 text-[11px]">Receive daily PDF reports at 08:00 AM IST</p>
+                      <p className="text-slate-400 text-[11px]">Receive daily PDF operational reports at 08:00 AM IST</p>
                     </div>
                     <button
                       type="button"
