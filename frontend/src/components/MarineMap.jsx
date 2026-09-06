@@ -20,25 +20,6 @@ const CATEGORY_STYLES = {
     LOW: { color: '#84cc16', heatRadius: 18000, emoji: '🟢', badgeBg: 'bg-lime-500/20 text-lime-300' }
 };
 
-// Custom User Pin Icon (📍)
-const userIcon = L.divIcon({
-    className: 'custom-user-pin',
-    html: `<div style="background-color: #ef4444; width: 30px; height: 30px; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px rgba(239,68,68,0.8); font-size: 15px;">📍</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
-});
-
-// Category-based Marker Icon
-const createPfzIcon = (category, isNearest) => {
-    const style = CATEGORY_STYLES[category] || CATEGORY_STYLES.MODERATE;
-    return L.divIcon({
-        className: 'custom-pfz-pin',
-        html: `<div style="background-color: ${style.color}; width: ${isNearest ? '34px' : '26px'}; height: ${isNearest ? '34px' : '26px'}; border-radius: 50%; border: 3px solid white; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 ${isNearest ? '22px ' + style.color : '12px ' + style.color}; font-size: ${isNearest ? '16px' : '12px'}; color: white; font-weight: bold;">${isNearest ? '⭐' : style.emoji}</div>`,
-        iconSize: isNearest ? [34, 34] : [26, 26],
-        iconAnchor: isNearest ? [17, 17] : [13, 13]
-    });
-};
-
 // Fit Map View to Bounding Box
 function MapFitBounds({ bounds }) {
     const map = useMap();
